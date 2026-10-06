@@ -52,7 +52,8 @@ __Dispatch_this:
         bra.s   2f
 
 1:
-        jsr     m68k_DispatchFrame
+//        jsr     m68k_DispatchFrame
+        jsr     cpu_Dispatch
         move.l  %d0,%a5
         move.l  ThisTask(%a6),%a3
 
