@@ -1,12 +1,4 @@
-/*
-    Copyright © 2012, The AROS Development Team. All rights reserved.
-    $Id$
-
-    Desc: Dispatch()
-    Lang: english
-
-    These routines are the core of the m68k scheduling system
-*/
+/* Restore an m68k task context directly from its saved user-stack frame. */
 
 #include "aros/m68k/asm.h"
 
@@ -17,8 +9,6 @@
 
         .func AROS_SLIB_ENTRY(Dispatch,Exec,10)
 AROS_SLIB_ENTRY(Dispatch,Exec,10):
-        lea.l   %sp@(-4*(8+8)),%sp      /* %sp = regs_t */
-        move.l  %sp,%sp@-               /* Push regs_t * onto stack */
 __Dispatch_this:
         /* A6 may still contain the caller's library base here. */
         move.l  4,%a6
@@ -52,8 +42,7 @@ __Dispatch_this:
         bra.s   2f
 
 1:
-//        jsr     m68k_DispatchFrame
-        jsr     cpu_Dispatch
+        jsr     m68k_DispatchFrame
         move.l  %d0,%a5
         move.l  ThisTask(%a6),%a3
 
