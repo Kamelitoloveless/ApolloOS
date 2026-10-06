@@ -6,6 +6,7 @@
 */
 
 #include <aros/asmcall.h>
+#include <aros/atomic.h>
 #include <exec/execbase.h>
 #include <hardware/intbits.h>
 
