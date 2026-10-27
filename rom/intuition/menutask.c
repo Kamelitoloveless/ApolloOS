@@ -1,6 +1,6 @@
 /*
-    Copyright © 1995-2017, The AROS Development Team. All rights reserved.
-    Copyright © 2001-2003, The MorphOS Development Team. All Rights Reserved.
+    Copyright ï¿½ 1995-2017, The AROS Development Team. All rights reserved.
+    Copyright ï¿½ 2001-2003, The MorphOS Development Team. All Rights Reserved.
     $Id$
 */
 
@@ -1964,7 +1964,8 @@ static void AddToSelection(struct MenuHandlerData *mhd, struct IntuitionBase *In
             item = mhd->activeitem;
         }
 
-        if (item && (ItemAddress(mhd->menu, men) == item))
+//        if (item && (ItemAddress(mhd->menu, men) == item))
+        if (item)
         {
             UWORD men = FULLMENUNUM(mhd->activemenunum, mhd->activeitemnum, mhd->activesubitemnum);
 
