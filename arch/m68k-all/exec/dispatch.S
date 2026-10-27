@@ -27,6 +27,9 @@ __Dispatch_this:
         move.w  AttnFlags(%a6),%d1
         and.w   #AFF_FPU,%d1
         bne.s   1f
+        move.l  tc_SPReg(%a3),%a1       /* A task that was in supervisor mode */
+        btst    #5,%a1@(4)              /* needs its stack pointer back, which */
+        bne.s   1f                      /* only the C path knows about */
 
         move.l  %d0,%a0@
         move.l  %d0,%a1
@@ -72,6 +75,21 @@ __Dispatch_this:
 6:
         lea.l   %a5@(66),%a2
         move.l  %a2,%usp
+        /*
+         * A task that was in supervisor mode continues on its own supervisor
+         * stack. m68k_DispatchFrame() leaves that stack pointer in
+         * m68k_ResumeSSP. The RTE below pops the format word (68010 and up)
+         * that this code puts in place under the PC and SR it pushes.
+         */
+        move.l  m68k_ResumeSSP,%d0
+        beq.s   7f
+        clr.l   m68k_ResumeSSP
+        move.l  %d0,%sp
+        btst    #0,%a6@(AttnFlags+1)
+        beq.s   7f
+        subq.l  #2,%sp
+        clr.w   %sp@
+7:
         move.l  %a5@+,%sp@-
         move.w  %a5@+,%sp@-
         movem.l %a5@,%d0-%d7/%a0-%a6

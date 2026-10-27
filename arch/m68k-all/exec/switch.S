@@ -23,9 +23,29 @@ AROS_SLIB_ENTRY(Switch,Exec,9):
         move.w  %sp@+,%a5@-
         move.l  %sp@+,%a5@-
 
-        move.l  %a5,%sp@-
+        /*
+         * A task that is in supervisor mode (it called SuperState()) runs on
+         * its own supervisor stack. That stack pointer is not part of the
+         * frame above and the SSP register is shared by all tasks, so it
+         * has to be remembered, or the task would resume on whatever stack
+         * pointer the last task left. After the SR and PC were popped, only
+         * the format word of the exception frame (68010 and up) is left on
+         * the supervisor stack; the task's own stack pointer was just above
+         * it. A6 is not necessarily SysBase here, use AbsExecBase.
+         */
+        sub.l   %a0,%a0
+        btst    #5,%a5@(4)              /* saved SR: supervisor mode? */
+        beq.s   1f
+        move.l  %sp,%a0
+        move.l  4,%a1
+        btst    #0,%a1@(AttnFlags+1)    /* 68010 or better: format word */
+        beq.s   1f
+        addq.l  #2,%a0
+1:
+        move.l  %a0,%sp@-               /* ssp */
+        move.l  %a5,%sp@-               /* frame */
         jsr     m68k_SwitchTail
-        addq.l  #4,%sp
+        addq.l  #8,%sp
         jmp     __Dispatch_this
         .endfunc
 
@@ -45,6 +65,25 @@ m68k_VoluntarySwitch:
         move.l  %sp@+,%a5@(13*4)
         move.w  %sp@+,%a5@-
         move.l  %sp@+,%a5@-
+
+        /*
+         * Remember the supervisor stack pointer of a task that waits in
+         * supervisor mode, see Switch() above. This runs before the
+         * critical section; if a signal arrives and the task does not switch,
+         * the record is simply never used (it is tied to this frame).
+         */
+        sub.l   %a0,%a0
+        btst    #5,%a5@(4)
+        beq.s   2f
+        move.l  %sp,%a0
+        btst    #0,%a6@(AttnFlags+1)
+        beq.s   2f
+        addq.l  #2,%a0
+2:
+        move.l  %a5,%sp@-               /* frame */
+        move.l  %a0,%sp@-               /* ssp */
+        jsr     m68k_SaveSSP
+        addq.l  #8,%sp
 
         /*
          * The expensive trap and context save above run with interrupts

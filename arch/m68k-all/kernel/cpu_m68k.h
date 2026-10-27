@@ -23,6 +23,10 @@ struct AROSCPUContext
 	struct ExceptionContext cpu;
 	struct FpuContext fpu;
     struct AMMXContext ammx;
+    /* supervisor stack pointer of a task in supervisor mode, or NULL */
+    APTR ssp;   
+    /* the frame (tc_SPReg) it belongs to */
+    APTR ssp_frame;
 };
 
 typedef struct ExceptionContext regs_t;

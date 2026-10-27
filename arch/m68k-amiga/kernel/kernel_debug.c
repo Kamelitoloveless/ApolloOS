@@ -1,57 +1,143 @@
 /*
-    Copyright © 1995-2014, The AROS Development Team. All rights reserved.
-    $Id$
+    Copyright (C) 1995-2026, The AROS Development Team. All rights reserved.
+
+    The assembly scheduler entry saves and restores the integer context
+    directly on the task's user stack; this file retains the common scheduler
+    policy and optional CPU-context handling.
 */
 
-#include <aros/kernel.h>
+#include <exec/execbase.h>
+#include <exec/alerts.h>
+#include <proto/exec.h>
+#include <defines/kernel.h>
 
 #include <kernel_base.h>
-#include <kernel_debug.h>
+#include <kernel_scheduler.h>
 
-/** Screen/Serial Debug **/
-#define SERDATR			0x18
-#define   SERDATR_OVRUN		(1 << 15)	/* Overrun */
-#define   SERDATR_RBF		(1 << 14)	/* Rx Buffer Full */
-#define   SERDATR_TBE		(1 << 13)	/* Tx Buffer Empty */
-#define   SERDATR_TSRE		(1 << 12)	/* Tx Shift Empty */
-#define   SERDATR_RXD		(1 << 11)	/* Rx Pin */
-#define   SERDATR_STP9		(1 <<  9)	/* Stop bit (if 9 data) */
-#define   SERDATR_STP8		(1 <<  8)	/* Stop bit (if 8 data) */
-#define   SERDATR_DB9_of(x)	((x) & 0x1ff)	/* 9-bit data */
-#define   SERDATR_DB8_of(x)	((x) & 0xff)	/* 8-bit data */
-#define SERDAT			0x30
-#define   SERDAT_STP9		(1 << 9)
-#define   SERDAT_STP8		(1 << 8)
-#define   SERDAT_DB9(x)		((x) & 0x1ff)
-#define   SERDAT_DB8(x)		((x) & 0xff)
-
-static inline void reg_w(ULONG reg, UWORD val)
-{
-	volatile UWORD *r = (void *)(0xdff000 + reg);
-
-	*r = val;
-}
-
-static inline UWORD reg_r(ULONG reg)
-{
-	volatile UWORD *r = (void *)(0xdff000 + reg);
-
-	return *r;
-}
+extern void cpu_Exception(void);
+asm (
+        "       .text\n"
+        "       .align 4\n"
+        "       .globl cpu_Exception\n"
+        "cpu_Exception:\n"
+        "       movem.l %d0-%d1/%a0-%a1/%a6,%sp@-\n"
+        "       move.l  (4),%a6\n"
+        "       jsr     %a6@(-1 * 6 * 11 /* Exception */)\n"
+        "       movem.l %sp@+,%d0-%d1/%a0-%a1/%a6\n"
+        "       rts\n"
+);
 
 /*
- * KernelBase is an optional parameter here. During
- * very early startup it can be NULL.
+ * Supervisor stack pointer of a task that is in supervisor mode (SuperState()).
+ * The SSP register is shared by all tasks and the saved frame does not contain
+ * it, so Switch() and Wait() hand it over here, tied to the frame it belongs to,
+ * and m68k_DispatchFrame() gives it back to Dispatch() through m68k_ResumeSSP.
+ *
+ * This needs two fields at the end of struct AROSCPUContext:
+ *     APTR ssp;         supervisor stack pointer, or NULL
+ *     APTR ssp_frame;   the frame (tc_SPReg) it belongs to
  */
-int krnPutC(int chr, struct KernelBase *KernelBase)
+volatile APTR m68k_ResumeSSP;
+
+void m68k_SaveSSP(APTR ssp, APTR frame)
 {
-	if (chr == '\n')
-		krnPutC('\r', KernelBase);
+    struct Task *task = SysBase->ThisTask;
+    struct AROSCPUContext *ctx = task->tc_UnionETask.tc_ETask->et_RegFrame;
 
-	while ((reg_r(SERDATR) & SERDATR_TBE) == 0);
+    ctx->ssp = ssp;
+    ctx->ssp_frame = frame;
+}
 
-	/* Output a char to the debug UART */
-	reg_w(SERDAT, SERDAT_STP8 | SERDAT_DB8(chr));
+void m68k_SwitchTail(APTR frame, APTR ssp)
+{
+    struct Task *task = SysBase->ThisTask;
+    struct AROSCPUContext *ctx = task->tc_UnionETask.tc_ETask->et_RegFrame;
 
-	return 1;
+    ctx->ssp = ssp;
+    ctx->ssp_frame = frame;
+
+    if (SysBase->AttnFlags & AFF_FPU)
+        AROS_UFC2NR(void, FpuSaveContext,
+            AROS_UFCA(struct FpuContext *, &ctx->fpu, A0),
+            AROS_UFCA(UWORD, (SysBase->AttnFlags & AFF_68060) ? 2 : 0, D0));
+
+    if (SysBase->AttnFlags & AFF_68080)
+        AROS_UFC1NR(void, AMMXSaveContext,
+            AROS_UFCA(struct AMMXContext *, &ctx->ammx, A0));
+
+    task->tc_SPReg = frame;
+    core_Switch();
+}
+
+APTR m68k_DispatchFrame(void)
+{
+    struct Task *task;
+    struct AROSCPUContext *ctx;
+    UBYTE *frame;
+
+    for (;;) {
+        asm volatile ("ori #0x0700, %sr\n");
+
+        task = core_Dispatch();
+        if (task != NULL)
+            break;
+
+        if (SysBase->IDNestCnt >= 0) {
+            SysBase->IDNestCnt = -1;
+            asm volatile ("move.w #0xc000,0xdff09a\n");
+        }
+        asm volatile ("stop #0x2000\n");
+    }
+
+    ctx = task->tc_UnionETask.tc_ETask->et_RegFrame;
+    if (SysBase->AttnFlags & AFF_FPU)
+        AROS_UFC2NR(void, FpuRestoreContext,
+            AROS_UFCA(struct FpuContext *, &ctx->fpu, A0),
+            AROS_UFCA(UWORD, (SysBase->AttnFlags & AFF_68060) ? 2 : 0, D0));
+
+    if (SysBase->AttnFlags & AFF_68080)
+        AROS_UFC1NR(void, AMMXRestoreContext,
+            AROS_UFCA(struct AMMXContext *, &ctx->ammx, A0));
+
+    if (SysBase->IDNestCnt < 0)
+        asm volatile ("move.w #0xc000,0xdff09a\n");
+    else
+        asm volatile ("move.w #0x4000,0xdff09a\n");
+
+    frame = task->tc_SPReg;
+
+    /* A task that was switched out in supervisor mode (saved SR bit 13) gets
+     * its own supervisor stack pointer back (the SR is at offset 4 of the frame) */
+    m68k_ResumeSSP = NULL;
+    if ((frame[4] & 0x20) && ctx->ssp_frame == (APTR)frame)
+        m68k_ResumeSSP = ctx->ssp;
+    ctx->ssp = NULL;
+    ctx->ssp_frame = NULL;
+
+    if (task->tc_Flags & TF_EXCEPT) {
+        ULONG originalPC = *(ULONG *)frame;
+        UBYTE *exceptionFrame = frame - sizeof(ULONG);
+        unsigned int i;
+
+        /* Exec_Exception() balances this Disable() when it returns. */
+        Disable();
+
+        if (exceptionFrame <= (UBYTE *)task->tc_SPLower)
+            Alert(AT_DeadEnd | AN_StackProbe);
+
+        /*
+         * Make room below the 66-byte task-stack frame.  The destination is
+         * lower than the source, so a forward byte copy is overlap-safe.
+         * Restoring this shifted frame sets USP to the word immediately after
+         * it; place the interrupted PC there for cpu_Exception's final RTS.
+         */
+        for (i = 0; i < 66; i++)
+            exceptionFrame[i] = frame[i];
+        *(ULONG *)(exceptionFrame + 66) = originalPC;
+        *(ULONG *)exceptionFrame = (ULONG)cpu_Exception;
+        task->tc_SPReg = exceptionFrame;
+        frame = exceptionFrame;
+    }
+
+    return frame;
 }
