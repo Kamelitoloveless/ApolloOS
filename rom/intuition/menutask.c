@@ -1964,8 +1964,7 @@ static void AddToSelection(struct MenuHandlerData *mhd, struct IntuitionBase *In
             item = mhd->activeitem;
         }
 
-//        if (item && (ItemAddress(mhd->menu, men) == item))
-        if (item)
+        if (item && (ItemAddress(mhd->menu, men) == item))
         {
             UWORD men = FULLMENUNUM(mhd->activemenunum, mhd->activeitemnum, mhd->activesubitemnum);
 
